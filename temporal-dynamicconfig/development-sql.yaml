@@ -1,0 +1,7 @@
+# Минимальный dynamic config для локального Temporal (как в официальном docker-compose)
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}

@@ -1,0 +1,19 @@
+VARIANT := {{VARIANT}}
+ROOT := $(abspath ../..)
+
+verify: ## проверить решение: сброс моков → прогон solution/run.sh → чекер
+	@python3 $(ROOT)/scripts/verify.py --variant $(VARIANT)
+
+begin: ## зафиксировать время старта (идемпотентно, выполняется один раз)
+	@python3 $(ROOT)/scripts/timer.py begin --variant $(VARIANT)
+
+reset: ## сбросить состояние моков вручную (verify делает это сам)
+	@curl -s -X POST http://localhost:8100/admin/reset > /dev/null && echo "моки сброшены"
+
+state: ## текущее состояние всех заказов в моках (для отладки)
+	@curl -s http://localhost:8100/admin/state | python3 -m json.tool
+
+ledger: ## журнал вызовов API; по одному заказу: make ledger ORDER=ORD-1001
+	@curl -s "http://localhost:8100/admin/ledger$(if $(ORDER),?order_id=$(ORDER),)" | python3 -m json.tool
+
+.PHONY: verify begin reset state ledger

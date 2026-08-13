@@ -1,0 +1,2 @@
+temporalio==1.31.0
+httpx==0.28.1
