@@ -71,6 +71,11 @@ def step(title, cond, results):
     results.append(cond)
 
 
+def expect_fail(why):
+    print("\n┌─ ВНИМАНИЕ: следующий verify ДОЛЖЕН упасть — это проверка чекера")
+    print("└─ ({}). «VERIFY FAILED» ниже — запланированный.".format(why))
+
+
 def main():
     results = []
 
@@ -82,6 +87,7 @@ def main():
     workspace("python")
     sol = ROOT / "runs" / "python" / "solution"
     (sol / "run.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    expect_fail("пустое решение не должно проходить")
     step("пустое решение падает (RED)", failed_with(verify("python"), "Журнал пуст"), results)
 
     # GREEN: эталон на чистом питоне проходит
@@ -91,11 +97,13 @@ def main():
 
     # NEGATIVE 1: «забыли» refund при провале доставки — чекер должен поймать
     (sol / "REF_BUG").write_text("no_refund\n")
+    expect_fail("в эталон подсажен баг: не делается refund")
     step("чекер ловит отсутствие refund (NEGATIVE)",
          failed_with(verify("python"), "нет возврата денег"), results)
 
     # NEGATIVE 2: новый Idempotency-Key на каждую попытку → двойное списание
     (sol / "REF_BUG").write_text("new_key_per_attempt\n")
+    expect_fail("в эталон подсажен баг: новый Idempotency-Key на каждую попытку")
     step("чекер ловит двойное списание (NEGATIVE)",
          failed_with(verify("python"), "ДВОЙНОЕ СПИСАНИЕ"), results)
     (sol / "REF_BUG").unlink()
@@ -113,6 +121,7 @@ def main():
     print("\n" + "=" * 60)
     if all(results):
         print("✅ СЕЛФТЕСТ ПРОЙДЕН ({}/{}): стенд готов к эксперименту".format(len(results), len(results)))
+        print("   3 «VERIFY FAILED» выше — запланированные (RED и два NEGATIVE-кейса).")
         print("   Воркспейсы очищены. Перед прогоном пересоздай: make workspace VARIANT=... FORCE=1")
         return 0
     print("❌ СЕЛФТЕСТ НЕ ПРОЙДЕН ({} из {} ок)".format(sum(results), len(results)))
