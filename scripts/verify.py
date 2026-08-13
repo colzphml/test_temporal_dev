@@ -177,8 +177,9 @@ def main():
     t_start = time.monotonic()
     timed_out = False
 
-    if phase == 2:
-        print("… моки сброшены; фаза 2: запускаю решение, убью его после {} списаний".format(KILL_AFTER_CHARGES))
+    if phase >= 2:
+        print("… моки сброшены; фаза {}: запускаю решение, убью его после {} списаний".format(
+            phase, KILL_AFTER_CHARGES))
         proc = launch(sol, env)
         status, val = wait_kill_condition(proc)
         if status == "died":

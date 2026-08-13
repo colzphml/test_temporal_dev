@@ -63,7 +63,7 @@ def ensure_venv(ws, variant):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--variant", required=True, choices=["python", "temporal"])
-    ap.add_argument("--phase", type=int, default=1, choices=[1, 2])
+    ap.add_argument("--phase", type=int, default=1, choices=[1, 2, 3])
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
@@ -89,10 +89,16 @@ def main():
 
     parts = [(SPEC / "intro.md").read_text(), (SPEC / "SPEC.md").read_text()]
     if args.phase == 2:
+        # фаза 2: живучесть + полные чит-шиты обоих уровней
         parts.append((SPEC / "phase2.md").read_text())
-    parts.append((SPEC / "variant_{}.md".format(args.variant)).read_text())
-    if args.phase == 2:
+        parts.append((SPEC / "variant_{}.md".format(args.variant)).read_text())
         parts.append((SPEC / "phase2_{}.md".format(args.variant)).read_text())
+    elif args.phase == 3:
+        # фаза 3: то же задание, но без готового кода и рецептов
+        parts.append((SPEC / "phase3.md").read_text())
+        parts.append((SPEC / "variant_{}_bare.md".format(args.variant)).read_text())
+    else:
+        parts.append((SPEC / "variant_{}.md".format(args.variant)).read_text())
     (ws / "TASK.md").write_text("\n\n---\n\n".join(parts))
     (ws / "PHASE").write_text(str(args.phase) + "\n")
     (ws / "CLAUDE.md").write_text(

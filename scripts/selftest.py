@@ -154,6 +154,23 @@ def main():
          failed_with(verify("temporal"), "ДВОЙНОЕ СПИСАНИЕ"), results)
     (tsol / "REF_BUG").unlink()
 
+    # ── ФАЗА 3: то же, но TASK.md без готового кода ────────────────
+    workspace("python", phase=3)
+    put_reference("python2", "python")
+    task_p = (ROOT / "runs" / "python" / "TASK.md").read_text()
+    step("фаза 3: в TASK.md (python) нет готового кода",
+         "```python" not in task_p and "```bash" not in task_p, results)
+    step("фаза 3: эталон python проходит (GREEN)",
+         passed_with(verify("python"), "пережит"), results)
+
+    workspace("temporal", phase=3)
+    put_reference("temporal2", "temporal")
+    task_t = (ROOT / "runs" / "temporal" / "TASK.md").read_text()
+    step("фаза 3: в TASK.md (temporal) нет готового кода",
+         "```python" not in task_t and "```bash" not in task_t, results)
+    step("фаза 3: эталон temporal проходит (GREEN)",
+         passed_with(verify("temporal"), "пережит"), results)
+
     # прибраться: чистые воркспейсы фазы 1 по умолчанию, без эталонов внутри
     workspace("python")
     workspace("temporal")
@@ -162,7 +179,7 @@ def main():
     if all(results):
         print("✅ СЕЛФТЕСТ ПРОЙДЕН ({}/{}): стенд готов к эксперименту".format(len(results), len(results)))
         print("   5 «VERIFY FAILED» выше — запланированные (RED и четыре NEGATIVE-кейса).")
-        print("   Воркспейсы пересозданы чистыми (фаза 1). Перед прогоном: make workspace VARIANT=... [PHASE=2] FORCE=1")
+        print("   Воркспейсы пересозданы чистыми (фаза 1). Перед прогоном: make workspace VARIANT=... [PHASE=2|3] FORCE=1")
         return 0
     print("❌ СЕЛФТЕСТ НЕ ПРОЙДЕН ({} из {} ок)".format(sum(results), len(results)))
     return 1
