@@ -29,8 +29,8 @@ urls: ## адреса сервисов
 	@echo "Temporal UI:           http://localhost:8233"
 
 # ── Эксперимент (протокол: EXPERIMENT.md) ─────────────────────────────
-workspace: _need_variant ## создать воркспейс прогона: make workspace VARIANT=python|temporal [FORCE=1]
-	@python3 scripts/workspace.py --variant $(VARIANT) $(if $(FORCE),--force,)
+workspace: _need_variant ## создать воркспейс: make workspace VARIANT=python|temporal [PHASE=2] [FORCE=1]
+	@python3 scripts/workspace.py --variant $(VARIANT) $(if $(PHASE),--phase $(PHASE),) $(if $(FORCE),--force,)
 
 begin: _need_variant ## зафиксировать старт прогона: make begin VARIANT=... [MODEL="..."]
 	@python3 scripts/timer.py begin --variant $(VARIANT) $(if $(MODEL),--model "$(MODEL)",)

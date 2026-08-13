@@ -39,6 +39,16 @@ def _save(variant, data):
     _path(variant).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
+def _phase(variant):
+    p = ROOT / "runs" / variant / "PHASE"
+    if p.exists():
+        try:
+            return int(p.read_text().strip() or "1")
+        except ValueError:
+            pass
+    return 1
+
+
 def cmd_begin(args):
     data = _load(args.variant)
     if data and not data.get("end"):
@@ -51,6 +61,7 @@ def cmd_begin(args):
         print("📦 Прошлый завершённый результат перенесён в results/history/")
     data = {
         "variant": args.variant,
+        "phase": _phase(args.variant),
         "model": args.model or "",
         "begin": _iso(_now()),
         "attempts": [],
@@ -90,8 +101,8 @@ def _fmt_row(d):
         dur_s = "{}:{:02d}".format(mins, secs)
     attempts = d.get("attempts", [])
     fails = sum(1 for a in attempts if not a["ok"])
-    return "| {} | {} | {} | {} | {} | {} |".format(
-        d["variant"], d.get("model") or "?", d["begin"], dur_s, len(attempts), fails)
+    return "| {} | {} | {} | {} | {} | {} | {} |".format(
+        d["variant"], d.get("phase", 1), d.get("model") or "?", d["begin"], dur_s, len(attempts), fails)
 
 
 def cmd_report(args):
@@ -106,8 +117,8 @@ def cmd_report(args):
     if not rows:
         print("Результатов пока нет. Перед прогоном: make begin VARIANT=python|temporal")
         return 0
-    header = ("| вариант | модель | старт | длительность | verify всего | неудачных |\n"
-              "|---|---|---|---|---|---|")
+    header = ("| вариант | фаза | модель | старт | длительность | verify всего | неудачных |\n"
+              "|---|---|---|---|---|---|---|")
     table = header + "\n" + "\n".join(rows)
     print(table)
     RESULTS.mkdir(parents=True, exist_ok=True)

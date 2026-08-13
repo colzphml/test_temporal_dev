@@ -18,6 +18,7 @@ class State:
         self.shipments = {}        # shipment_id -> {order_id, profile, created_ts}
         self.shipment_by_order = {}  # order_id -> shipment_id
         self.notifications = {}    # order_id -> [{status, reason, ts}]
+        self.kill_ts = None        # фаза 2: момент SIGKILL решения (rel-секунды)
 
     def now(self):
         """Секунды от последнего reset (относительное время журнала)."""

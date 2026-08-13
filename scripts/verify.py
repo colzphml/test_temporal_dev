@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """make verify: сброс моков → запуск solution/run.sh → проверка инвариантов чекером.
 
+Фаза 1: одиночный запуск решения.
+Фаза 2 (в воркспейсе лежит файл PHASE со значением 2): решение убивается SIGKILL
+после нескольких успешных списаний и перезапускается — проверка живучести.
+
 Критерий готовности решения в эксперименте. Идемпотентен, можно гонять сколько
 угодно. Каждая попытка логируется таймером (кроме режима селфтеста харнесса).
 """
@@ -13,11 +17,14 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MOCKS = "http://localhost:8100"
-RUN_TIMEOUT = 150  # жёсткий предел на run.sh; содержательный бюджет (30с) проверяет чекер
+RUN_TIMEOUT = 150        # жёсткий предел на один запуск run.sh
+KILL_AFTER_CHARGES = 3   # фаза 2: SIGKILL после стольких успешных списаний
+KILL_DEADLINE = 60       # фаза 2: сколько ждать достижения точки SIGKILL
 SELFTEST = os.environ.get("HARNESS_SELFTEST") == "1"
 
 
@@ -79,6 +86,53 @@ def timer(*args):
     subprocess.run([sys.executable, str(ROOT / "scripts" / "timer.py")] + list(args), cwd=str(ROOT))
 
 
+def launch(sol, env):
+    return subprocess.Popen(["bash", "run.sh"], cwd=str(sol), env=env, start_new_session=True)
+
+
+def kill_group(proc, sig):
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except Exception:
+        pass
+
+
+def wait_full(proc):
+    """Дождаться завершения запуска: (rc, timed_out)."""
+    try:
+        return proc.wait(timeout=RUN_TIMEOUT), False
+    except subprocess.TimeoutExpired:
+        kill_group(proc, signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            kill_group(proc, signal.SIGKILL)
+            proc.wait()
+        return -1, True
+
+
+def total_charges():
+    state = http("GET", "/admin/state")
+    return sum(len(o["payments"]["successful_charges"]) for o in state["orders"])
+
+
+def wait_kill_condition(proc):
+    """Ждать точку SIGKILL (фаза 2): вернуть ('ok', elapsed) | ('died', rc) | ('timeout', None)."""
+    t0 = time.monotonic()
+    while True:
+        rc = proc.poll()
+        if rc is not None:
+            return "died", rc
+        try:
+            if total_charges() >= KILL_AFTER_CHARGES:
+                return "ok", time.monotonic() - t0
+        except Exception:
+            pass
+        if time.monotonic() - t0 > KILL_DEADLINE:
+            return "timeout", None
+        time.sleep(0.3)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--variant", required=True, choices=["python", "temporal"])
@@ -89,6 +143,13 @@ def main():
     if not ws.exists():
         print("❌ Воркспейс {} не существует. Сначала: make workspace VARIANT={}".format(ws, args.variant))
         return 2
+    phase = 1
+    phase_file = ws / "PHASE"
+    if phase_file.exists():
+        try:
+            phase = int(phase_file.read_text().strip() or "1")
+        except ValueError:
+            phase = 1
     if not (sol / "run.sh").exists():
         print("❌ Нет файла solution/run.sh — это точка входа решения (контракт в TASK.md).")
         timer("attempt", "--variant", args.variant, "--fail")
@@ -104,30 +165,45 @@ def main():
         terminate_stale_workflows()
 
     http("POST", "/admin/reset")
-    print("… моки сброшены, запускаю solution/run.sh")
 
     env = dict(os.environ)
     env.update({
         "MOCKS_URL": MOCKS,
         "TEMPORAL_ADDRESS": "localhost:7233",
         "TEMPORAL_NAMESPACE": "default",
+        "RUN_ID": uuid.uuid4().hex[:8],
     })
+
     t_start = time.monotonic()
-    proc = subprocess.Popen(["bash", "run.sh"], cwd=str(sol), env=env, start_new_session=True)
     timed_out = False
-    try:
-        rc = proc.wait(timeout=RUN_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        rc = -1
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
+
+    if phase == 2:
+        print("… моки сброшены; фаза 2: запускаю решение, убью его после {} списаний".format(KILL_AFTER_CHARGES))
+        proc = launch(sol, env)
+        status, val = wait_kill_condition(proc)
+        if status == "died":
+            print("❌ run.sh завершился (код {}) до точки SIGKILL — решение упало слишком рано".format(val))
+            rc = val if val != 0 else 1
+        elif status == "timeout":
+            kill_group(proc, signal.SIGKILL)
+            proc.wait()
+            print("❌ За {}с решение не добралось до {} успешных списаний — нечего убивать".format(
+                KILL_DEADLINE, KILL_AFTER_CHARGES))
+            rc = 1
+        else:
+            kill_group(proc, signal.SIGKILL)
+            proc.wait()
+            http("POST", "/admin/mark-kill")  # отметка строго после смерти процесса
+            print("💀 SIGKILL через {:.1f}с (успешных списаний ≥ {}). Рестарт через 1с…".format(
+                val, KILL_AFTER_CHARGES))
+            time.sleep(1)
+            proc = launch(sol, env)
+            rc, timed_out = wait_full(proc)
+    else:
+        print("… моки сброшены, запускаю solution/run.sh")
+        proc = launch(sol, env)
+        rc, timed_out = wait_full(proc)
+
     dur = time.monotonic() - t_start
     print("… run.sh завершился с кодом {} за {:.1f}с".format(rc, dur))
 

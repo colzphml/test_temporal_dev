@@ -239,6 +239,27 @@ def run_checks():
         if evs and note_evs:
             intervals.append((evs[0]["ts"], note_evs[0]["ts"]))
 
+    # --- фаза 2: разрыв (SIGKILL + рестарт) должен быть пережит
+    if STATE.kill_ts is not None:
+        pre_charges = [e for e in STATE.ledger
+                       if e["service"] == "payments" and e["action"] == "charge"
+                       and e["ok"] and e["ts"] < STATE.kill_ts]
+        post_notes = [e for e in STATE.ledger
+                      if e["service"] == "notifications" and e["ok"]
+                      and e["ts"] > STATE.kill_ts]
+        if not pre_charges:
+            all_ok = False
+            lines.append(f"❌ До SIGKILL (t={STATE.kill_ts:.1f}с) не было ни одного успешного "
+                         "списания — разрыв случился до начала реальной работы")
+        if not post_notes:
+            all_ok = False
+            lines.append(f"❌ После SIGKILL (t={STATE.kill_ts:.1f}с) и рестарта не отправлено "
+                         "ни одного уведомления — решение не пережило разрыв "
+                         "(повторный запуск run.sh обязан довести заказы до конца)")
+        if pre_charges and post_notes:
+            lines.append(f"💀 SIGKILL на t={STATE.kill_ts:.1f}с пережит: списаний до разрыва "
+                         f"{len(pre_charges)}, уведомлений после рестарта {len(post_notes)}")
+
     # --- конкурентность и общий лимит времени
     t0 = STATE.ledger[0]["ts"]
     if len(intervals) == len(ORDERS):

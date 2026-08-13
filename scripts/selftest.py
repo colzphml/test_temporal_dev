@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Селфтест харнесса: чекер принимает эталонные решения и ловит испорченные.
 
-Последовательность: RED (пустое решение) → GREEN python → 2 негативных кейса
-(REF_BUG) → GREEN temporal → повторный GREEN temporal (сброс между прогонами).
+Фаза 1: RED (пустое решение) → GREEN python → 2 негативных кейса (REF_BUG) →
+GREEN temporal → повторный GREEN temporal (сброс между прогонами).
+Фаза 2 (SIGKILL + рестарт): GREEN python2 → NEGATIVE random_key →
+GREEN temporal2 → NEGATIVE stamped_ids.
 Таймер в этом режиме отключён (HARNESS_SELFTEST=1), results/ не засоряется.
 """
 import os
@@ -41,18 +43,30 @@ def failed_with(result, marker):
     return True
 
 
-def workspace(variant):
-    if sh([sys.executable, ROOT / "scripts" / "workspace.py", "--variant", variant, "--force"]) != 0:
+def workspace(variant, phase=1):
+    if sh([sys.executable, ROOT / "scripts" / "workspace.py", "--variant", variant,
+           "--phase", str(phase), "--force"]) != 0:
         print("❌ селфтест: не удалось создать воркспейс " + variant)
         sys.exit(1)
 
 
-def put_reference(variant):
-    src = ROOT / "reference" / variant
+def put_reference(name, variant):
+    src = ROOT / "reference" / name
     dst = ROOT / "runs" / variant / "solution"
     for f in src.iterdir():
         if f.is_file():
             shutil.copy(str(f), str(dst / f.name))
+
+
+def passed_with(result, marker):
+    """Зелёный verify, и в выводе есть маркер (например, что разрыв пережит)."""
+    rc, out = result
+    if rc != 0:
+        return False
+    if marker not in out:
+        print("⚠ verify прошёл, но в выводе нет маркера '{}'".format(marker))
+        return False
+    return True
 
 
 def clear_solution(variant):
@@ -83,6 +97,7 @@ def main():
         print("❌ селфтест: make up не прошёл")
         return 1
 
+    # ── ФАЗА 1 ─────────────────────────────────────────────────────
     # RED: решение-пустышка обязано провалить verify по причине «пустой журнал»
     workspace("python")
     sol = ROOT / "runs" / "python" / "solution"
@@ -92,7 +107,7 @@ def main():
 
     # GREEN: эталон на чистом питоне проходит
     clear_solution("python")
-    put_reference("python")
+    put_reference("python", "python")
     step("эталон python проходит (GREEN)", verify("python")[0] == 0, results)
 
     # NEGATIVE 1: «забыли» refund при провале доставки — чекер должен поймать
@@ -110,19 +125,44 @@ def main():
 
     # GREEN temporal + повторный прогон (сброс/зачистка между verify работает)
     workspace("temporal")
-    put_reference("temporal")
+    put_reference("temporal", "temporal")
     step("эталон temporal проходит (GREEN)", verify("temporal")[0] == 0, results)
     step("повторный verify temporal проходит (reset ok)", verify("temporal")[0] == 0, results)
 
-    # эталоны не должны остаться в воркспейсах — иначе испортят эксперимент
-    clear_solution("python")
-    clear_solution("temporal")
+    # ── ФАЗА 2: SIGKILL посреди батча + рестарт ────────────────────
+    workspace("python", phase=2)
+    sol = ROOT / "runs" / "python" / "solution"
+    put_reference("python2", "python")
+    step("фаза 2: эталон python переживает SIGKILL (GREEN)",
+         passed_with(verify("python"), "пережит"), results)
+
+    (sol / "REF_BUG").write_text("random_key\n")
+    expect_fail("в эталон подсажен баг: случайный ключ при каждом старте процесса")
+    step("фаза 2: чекер ловит двойное списание после рестарта (NEGATIVE)",
+         failed_with(verify("python"), "ДВОЙНОЕ СПИСАНИЕ"), results)
+    (sol / "REF_BUG").unlink()
+
+    workspace("temporal", phase=2)
+    tsol = ROOT / "runs" / "temporal" / "solution"
+    put_reference("temporal2", "temporal")
+    step("фаза 2: эталон temporal переживает SIGKILL (GREEN)",
+         passed_with(verify("temporal"), "пережит"), results)
+
+    (tsol / "REF_BUG").write_text("stamped_ids\n")
+    expect_fail("в эталон подсажен баг: workflow id меняется при рестарте")
+    step("фаза 2: чекер ловит дубли workflow после рестарта (NEGATIVE)",
+         failed_with(verify("temporal"), "ДВОЙНОЕ СПИСАНИЕ"), results)
+    (tsol / "REF_BUG").unlink()
+
+    # прибраться: чистые воркспейсы фазы 1 по умолчанию, без эталонов внутри
+    workspace("python")
+    workspace("temporal")
 
     print("\n" + "=" * 60)
     if all(results):
         print("✅ СЕЛФТЕСТ ПРОЙДЕН ({}/{}): стенд готов к эксперименту".format(len(results), len(results)))
-        print("   3 «VERIFY FAILED» выше — запланированные (RED и два NEGATIVE-кейса).")
-        print("   Воркспейсы очищены. Перед прогоном пересоздай: make workspace VARIANT=... FORCE=1")
+        print("   5 «VERIFY FAILED» выше — запланированные (RED и четыре NEGATIVE-кейса).")
+        print("   Воркспейсы пересозданы чистыми (фаза 1). Перед прогоном: make workspace VARIANT=... [PHASE=2] FORCE=1")
         return 0
     print("❌ СЕЛФТЕСТ НЕ ПРОЙДЕН ({} из {} ок)".format(sum(results), len(results)))
     return 1

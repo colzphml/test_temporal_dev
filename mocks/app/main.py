@@ -279,6 +279,13 @@ async def admin_reset():
     return {"status": "reset"}
 
 
+@app.post("/admin/mark-kill")
+async def admin_mark_kill():
+    """Фаза 2: харнесс отмечает момент SIGKILL решения (для чекера)."""
+    STATE.kill_ts = STATE.now()
+    return {"status": "marked", "kill_ts": STATE.kill_ts}
+
+
 @app.get("/admin/ledger")
 async def admin_ledger(order_id: Optional[str] = None):
     if order_id:
